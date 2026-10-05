@@ -1,0 +1,143 @@
+// SPDX-License-Identifier: MIT
+.{
+    // The package id, and the name a dependent writes in its dependency map.
+    // It is upstream's own library name, from `project(box3d ...)`
+    // (`CMakeLists.txt:4`).
+    .name = .box3d,
+    // Upstream's project version, read out of `project(box3d VERSION 0.1.0
+    // ...)` (`CMakeLists.txt:4-8`). It is also what the shared object's file
+    // name carries (`VERSION ${PROJECT_VERSION}`, `src/CMakeLists.txt:128`).
+    .version = "0.1.0",
+    .fingerprint = 0xa2c3cdfc66230ba7,
+    .minimum_zig_version = "0.16.0",
+
+    // Nothing is fetched. The C library is this repository's own source, the
+    // facade imports only what is compiled here, and the recordings the unit
+    // tests write are files the test itself produces.
+    //
+    // Upstream's own `BOX3D_PROFILE` option does download (`FetchContent` of
+    // wolfpld/tracy, `src/CMakeLists.txt:137-152`); this package has no
+    // equivalent option and builds no profiler.
+    .dependencies = .{},
+
+    // The complete closure of what a fetched copy of this package needs: the
+    // native core it compiles, the public headers it installs, upstream's own
+    // C unit-test closure, the fork's records, and the separate consumer
+    // package. `.zig-cache/`, `zig-out/`, `zig-pkg/` and `.git/` are absent by
+    // construction, and the ignore rules appended to the upstream `.gitignore`
+    // keep them out of the tree as well.
+    .paths = .{
+        // The native core: all forty-nine translation units of
+        // `BOX3D_SOURCE_FILES` (`src/CMakeLists.txt:3-90`), the public headers
+        // of `BOX3D_INCLUDE_FILES` (`:92-101`), and the private headers those
+        // units include by bare name from `src/`. All of them are upstream's
+        // bytes; nothing here is regenerated.
+        "src",
+        "include",
+        // Upstream's own unit-test closure: the twenty-one C files and the
+        // shared header of `BOX3D_TEST_FILES` (`test/CMakeLists.txt:3-26`),
+        // and the sample/benchmark support library its `main` links
+        // (`BOX3D_SHARED_FILES`, `shared/CMakeLists.txt:3-16`). `test/` reaches
+        // `src/` internals directly (`test/CMakeLists.txt:36-37`), so the two
+        // directories must stay siblings.
+        "test",
+        "shared",
+        // Upstream's own build systems, kept so a re-sync has something to
+        // diff against and so the licence and provenance of the import stay
+        // visible. None of them is executed: `build.zig` cites `src/` and
+        // `test/` CMakeLists for the source lists, the language level, the
+        // visibility and export policy, the version and soname, the validation,
+        // SIMD and precision options and the installed headers, and the root
+        // `CMakeLists.txt` for the deterministic-mathematics flag and the
+        // default option values.
+        //
+        // `build_vs2026.bat`, `build.sh`, `CMakePresets.json`, `deploy_docs.sh`
+        // and `.github/workflows/build.yml` are upstream's maintainer paths and
+        // are retained rather than deleted. `samples/`, `benchmark/`,
+        // `docs/`, `extern/sokol/`, `data/` and the editor/tool dotfiles ship
+        // for the same reason: nothing in this package compiles any of them,
+        // but a fetched copy is the whole tree, so an integrity record over
+        // the import resolves against it rather than reporting files the
+        // manifest left behind.
+        "CMakeLists.txt",
+        "CMakePresets.json",
+        "build.sh",
+        "build_vs2026.bat",
+        "deploy_docs.sh",
+        "benchmark",
+        "docs",
+        "samples",
+        "extern",
+        "data",
+        ".clang-format",
+        ".gitattributes",
+        ".gitignore",
+        // The fork's own build files. `zig/translate.h` is the header
+        // `addTranslateC` reads, `zig/root.zig` is the facade a dependent
+        // reaches through the `box3d` module, and `runtime/graph.zig` is
+        // what `-Druntime=true` substitutes for the translation module. They
+        // travel together because a dependent needs all three.
+        "build.zig",
+        "zig",
+        "runtime",
+        "tests.zig",
+        // This fork's own SDK sources. `build_support/` holds the C bridge
+        // `build.zig` compiles beside upstream's units, and it must travel
+        // with the graph that compiles it or a fetched copy does not build.
+        "build_support",
+        "smoke.zig",
+        // The harness settings for the published 53-platform `cross-test`
+        // matrix. Fork-authored configuration, not documentation and not a
+        // build input: nothing in `build.zig` reads it. It ships so a fetched
+        // copy is the whole package.
+        "cross-test.profile.sh",
+        // The manifest itself, so a fetched copy carries the file that declared
+        // it and the closure check in `.github/workflows/verify.yml` has one
+        // rule rather than a named exception.
+        "build.zig.zon",
+        // The Nix and devenv packaging, which builds this package from source
+        // through the same build graph and therefore needs the same tree.
+        "package.nix",
+        "flake.nix",
+        // The flake's own input lock. `flake.nix:21` pins nixpkgs to a full
+        // revision, and this lock records that same revision
+        // (`c7def046b9a883d46974757852106483d741586f`) plus the content hash
+        // it resolved to, so the fetch it describes is the one the URL already
+        // asks for. It ships because it is in the tree: a file in the tree
+        // that `.paths` does not list is one `zig fetch` silently drops, which
+        // is exactly what the closure check in `.github/workflows/verify.yml`
+        // exists to prevent.
+        "flake.lock",
+        "devenv.nix",
+        "devenv.yaml",
+        ".envrc",
+        // The separate consumer package, proving the published module resolves
+        // from a package that did not write it, through a relative path rather
+        // than a registry.
+        "consumer/build.zig",
+        "consumer/build.zig.zon",
+        "consumer/src/main.zig",
+        // The source-integrity record and the script that checks it. Nothing
+        // in `build.zig` reads either: the record is `sha256sum -c` input over
+        // the import, and `tools/check-provenance.sh` is the `sdk:provenance`
+        // devenv task. They ship because a fetched copy has to be able to
+        // verify the import it received, and a task whose record the manifest
+        // left behind is not a task.
+        "UPSTREAM.sha256",
+        "tools",
+        // Upstream's licence text and copyright notice, verbatim, and this
+        // fork's provenance, notice and grant records. `build.zig` installs all
+        // five under `share/licenses/box3d/`.
+        "LICENSE",
+        "README.upstream.md",
+        "NOTICE.md",
+        "UPSTREAM.md",
+        "FORK-LICENSE.md",
+        "CHANGELOG.md",
+        "FORK-NOTES.md",
+        "README.md",
+        "README.zig.md",
+        // Fork-authored continuous integration, which walks this same list.
+        ".github",
+    },
+}

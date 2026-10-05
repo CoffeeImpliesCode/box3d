@@ -1,0 +1,34 @@
+.{
+    // The package id for this consumer. It is the library's name with a
+    // `_consumer` suffix because it is a distinct package with a distinct
+    // identity, not a second version of the library.
+    .name = .box3d_consumer,
+    // This package is not published and carries no upstream version; the
+    // version is the identity of the proof, not of a release.
+    .version = "0.1.0",
+
+    // This package's own identity, the value the toolchain derived for the
+    // name above and reported when configuration failed without it. It is not
+    // the library's fingerprint: a consumer is a different package, so a
+    // dependent can tell the two apart, and changing it has security and
+    // trust implications.
+    .fingerprint = 0x66db25dcd505da1f,
+    .minimum_zig_version = "0.16.0",
+
+    .dependencies = .{
+        // A relative path, not a registry or archive URL. This package exists
+        // to prove that `dep.module("box3d")` resolves from outside the package
+        // that defines it; resolving that through a registry would make the
+        // proof depend on a published state of the world.
+        //
+        // The dependency key is `box3d`, which is the manifest's own `.name`,
+        // so `b.dependency("box3d", ...)` is what this file writes.
+        .box3d = .{ .path = ".." },
+    },
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

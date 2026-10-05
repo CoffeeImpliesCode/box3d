@@ -1,0 +1,32 @@
+build/
+imgui.ini
+settings.ini
+.vscode/
+.vs/
+.cap
+.DS_Store
+CMakeUserPresets.json
+.cache/
+.idea/
+.claude/
+.tmp/
+.fetchcontent-cache/
+build-dp/
+*.b3rec
+
+
+# --- this fork's build outputs -------------------------------------------------
+# Appended, never replacing an upstream rule above. Upstream's own paths stay
+# exactly as they were; these are the artefacts `zig build` and the
+# `consumer/` package leave behind, which upstream's CMake build never creates.
+
+# Zig's per-package build output and the manifest directory a fetched
+# dependency materialises beside a build root.
+/.zig-cache/
+/zig-out/
+/zig-pkg/
+
+# The consumer package is its own `zig build`, so it has its own two.
+/consumer/.zig-cache/
+/consumer/zig-out/
+/consumer/zig-pkg/
