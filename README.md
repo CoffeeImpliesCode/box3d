@@ -5,7 +5,7 @@ This package builds the upstream C17 library and provides a typed Zig facade.
 
 ## Source deviations from upstream
 
-No upstream source file is modified. The fork adds `build_support/box3d_abi_bridge.c` and its header. With double precision on x86-64, Zig 0.16 mis-lowers ten calls that pass `b3Pos` by value before a floating-point argument or return. The bridge uses pointer arguments and forwards to the unchanged C functions. The typed facade uses the bridge; `README.zig.md` lists the affected calls.
+No upstream source file is modified. The fork adds `build_support/box3d_abi_bridge.c` and its header. With double precision on x86-64, Zig 0.16 mis-lowers ten calls that pass `b3Pos` by value before a floating-point argument or return (observed with Zig 0.16; not rechecked on 0.17). The bridge uses pointer arguments and forwards to the unchanged C functions. The typed facade uses the bridge; `README.zig.md` lists the affected calls.
 
 ## Build deviations from upstream
 

@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: MIT
  *
  * The pointer-taking entry points for the ten public signatures that Zig 0.16's
- * x86_64 backend lowers differently from the compiler that built the core.
+ * x86_64 backend lowers differently from the compiler that built the core
+ * (observed with Zig 0.16; not rechecked on 0.17).
  *
  * Why it exists
  * -------------

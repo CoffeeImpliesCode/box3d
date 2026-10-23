@@ -380,7 +380,6 @@ const Unix = struct {
         // RTLD_NOW reports missing dependencies during open rather than at first use.
         // RTLD_LOCAL keeps provider symbols out of the process-wide lookup namespace.
         return std.c.dlopen(
-
             buffer[0..text.len :0].ptr,
             .{ .NOW = true, .GLOBAL = false },
         ) orelse error.OpenFailed;

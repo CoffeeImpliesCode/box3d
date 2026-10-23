@@ -7,7 +7,7 @@
 const std = @import("std");
 
 /// Translated Box3D declarations or the equivalent runtime-loaded dispatch.
-/// On double-precision x86_64, Zig 0.16 mis-lowers 24-byte `b3Pos` arguments; use `box3dAbi_*` bridges (`build_support/box3d_abi_bridge.h`).
+/// On double-precision x86_64, Zig 0.16 mis-lowers 24-byte `b3Pos` arguments; use `box3dAbi_*` bridges (`build_support/box3d_abi_bridge.h`) (observed with Zig 0.16; not rechecked on 0.17).
 pub const c = @import("c");
 
 const rt = @import("rt");

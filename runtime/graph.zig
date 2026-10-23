@@ -64,8 +64,8 @@ const libc_noise_storage: Noise = blk: {
     // Keep the string element type explicit for comptime expansion.
     const prefixes = [_][]const u8{ "", "__" };
     const suffixes = [_][]const u8{
-        "",     "f",      "l",      "f16",   "f32",   "f64",
-        "f128", "f16x",   "f32x",   "f64x",  "f128x", "ieee128",
+        "",     "f",    "l",    "f16",  "f32",   "f64",
+        "f128", "f16x", "f32x", "f64x", "f128x", "ieee128",
     };
     var storage: Noise = .{ .buf = undefined, .len = 0 };
     var bases = std.mem.splitScalar(u8, libc_math_bases, ',');
