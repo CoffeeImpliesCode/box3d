@@ -1,83 +1,32 @@
 // SPDX-License-Identifier: MIT
 //
-//! Joints: connecting two bodies with one of nine constraint types.
-//!
-//! ## What this module covers, and what it does not
-//!
-//! It covers joint creation - all nine types - destruction, validity, the
-//! attached bodies, and the settings every joint has: its local frames, whether
-//! the connected bodies collide, its user data, its event thresholds, its
-//! constraint tuning, and the constraint force, torque and separations the
-//! solver currently holds.
-//!
-//! It does not restate the per-type tuning accessors, of which there are well
-//! over a hundred: `b3DistanceJoint_SetSpringHertz` and its eight siblings,
-//! `b3WheelJoint_*`, and so on. Those are one call each with no argument worth
-//! checking and no failure to map, so they stay on `c`, reachable through
-//! `box3d.c.b3DistanceJoint_SetSpringHertz` and so on. They are not missing and
-//! not renamed; they were left where the header has them rather than duplicated
-//! into a second list that could drift.
-//!
-//! ## Ownership
-//!
-//! A joint belongs to the world, is attached to two bodies, and is destroyed
-//! either explicitly or when either attached body is destroyed. `world.destroy`
-//! takes it too. There is no wrapper and no heap: a `JointId` is
-//! `b3JointId` (`include/box3d/id.h:60-65`), passed by value.
-//!
-//! ## Local frames
-//!
-//! Both frames are measured from the body's origin rather than its centre of
-//! mass, and upstream explains why (`include/box3d/types.h:599-603`): the
-//! centre of mass is not always known in advance, and it moves when shapes are
-//! added or removed, which would break the joint.
+//! Joint definitions, creation, shared settings and lifecycle.
 
 const c = @import("c");
 const math = @import("math.zig");
 const body_mod = @import("body.zig");
 const world_mod = @import("world.zig");
 
-/// A joint handle, `b3JointId` (`include/box3d/id.h:60-65`).
 pub const JointId = c.b3JointId;
 
-/// Which kind of constraint this is, `b3JointType`
-/// (`include/box3d/types.h:586-597`).
 pub const JointType = c.b3JointType;
 
-/// The settings every joint type shares, `b3JointDef`
-/// (`include/box3d/types.h:604-641`).
-///
-/// The two attached bodies are not optional in any useful sense: a joint with
-/// no second body has nothing to constrain. `bodyIdA` and `bodyIdB` are plain
-/// ids rather than options here, because every creator needs both and making
-/// them optional would move the failure from the compiler to a runtime check for
-/// no gain.
+/// Local frames are relative to body origins, not centres of mass (`include/box3d/types.h:599-603`).
 pub const JointDef = struct {
-    /// The first attached body.
     bodyIdA: body_mod.BodyId,
-    /// The second attached body.
     bodyIdB: body_mod.BodyId,
-    /// The joint frame in body A's local coordinates.
     localFrameA: ?math.Transform = null,
-    /// The joint frame in body B's local coordinates.
     localFrameB: ?math.Transform = null,
     /// Force above which a joint event is reported, in newtons.
     forceThreshold: ?f32 = null,
     /// Torque above which a joint event is reported, in newton-metres.
     torqueThreshold: ?f32 = null,
-    /// Constraint stiffness in hertz. Upstream marks this an advanced feature.
     constraintHertz: ?f32 = null,
-    /// Constraint damping ratio. Advanced, as above.
     constraintDampingRatio: ?f32 = null,
-    /// Debug-draw scale for this joint.
     drawScale: ?f32 = null,
-    /// Should the two attached bodies collide with each other?
     collideConnected: ?bool = null,
-    /// Application data, readable with `userData`.
     userData: ?*anyopaque = null,
 
-    /// The base definition Box3D wants: upstream's `b3Default*JointDef` base
-    /// with the set fields written over it.
     pub fn native(self: JointDef) c.b3JointDef {
         var out = defaultBase();
         out.bodyIdA = self.bodyIdA;
@@ -95,72 +44,29 @@ pub const JointDef = struct {
     }
 };
 
-/// Upstream's default base joint definition, with both bodies null.
-///
-/// `b3JointDef` has no public `b3DefaultJointDef` of its own: upstream's is
-/// `static` (`src/joint.c:23-35`) and the nine public constructors each embed a
-/// copy of it (`src/joint.c:37-70`). This returns that same base, read out of a
-/// public constructor rather than restated, so the validity cookie
-/// `B3_CHECK_JOINT_DEF` reads comes from upstream and not from a transcription
-/// here. Its values are identity joint frames, `FLT_MAX` event thresholds,
-/// 60 hertz constraint stiffness, 2.0 damping, and a draw scale of one length
-/// unit (`src/joint.c:25-34`).
+/// Upstream defaults both body ids to null; its constructor preserves the validity cookie.
 pub fn defaultBase() c.b3JointDef {
     return c.b3DefaultDistanceJointDef().base;
 }
 
-
-/// Everything that can go wrong in this module.
 pub const Error = error{
-    /// The world id was not a live world. Create the joint in a world
-    /// `world.isValid` still reports.
-    ///
-    /// Each creator does answer a stale world id with a null joint id
-    /// (`src/joint.c:439-443` for `createDistance`, and the same lookup in the
-    /// other eight), but only after `b3GetUnlockedWorldFromId`, which asserts
-    /// on an out-of-range index or a generation that does not match
-    /// (`src/physics_world.c:93-96`) and on a locked world
-    /// (`src/physics_world.c:101-104`) before it can return null. So every
-    /// creator here asks `world.isValid` - upstream's own public predicate,
-    /// same generation comparison (`src/physics_world.c:1777-1793`) - first,
-    /// and the null id is never reached for a stale world. The check after the
-    /// call stays because it is what reports the locked-world case in a build
-    /// where the assertion does not fire: `B3_ASSERT` compiles to nothing
-    /// under `NDEBUG` without `B3_ENABLE_ASSERT`
-    /// (`include/box3d/base.h:123-131`), and a handler installed through
-    /// `base.setAssertFcn` may return 0 to skip the break
-    /// (`src/core.c:81-90`).
-    ///
-    /// The two body ids in the definition are a different matter and stay a
-    /// precondition on it: upstream resolves them through `b3GetBodyFullId`
-    /// (`src/joint.c:163-164`), which asserts on a stale one, and this module
-    /// does not inspect definition values.
+    /// Stale worlds return this error; locked worlds and stale body ids may assert first
+    /// (`src/joint.c:163-164`; `src/physics_world.c:93-104`).
     InvalidWorld,
 };
 
-// -- the nine typed definitions ----------------------------------------------
-//
-// Each is upstream's definition as optional overrides, plus a `native` that
-// starts from that type's own `b3Default*JointDef`. `internalValue` is absent
-// throughout, and `base` carries the shared settings.
-
-/// A distance joint: a segment between a point on A and a point on B, for
-/// ropes and springs (`include/box3d/types.h:643-688`).
+/// Distance joint for ropes and springs, connecting points on bodies A and B
+/// (`include/box3d/types.h:643-688`).
 pub const DistanceJointDef = struct {
-    /// The shared settings. `bodyIdA` and `bodyIdB` are required.
     base: JointDef,
     /// Rest length, clamped internally to a stable minimum.
     length: ?f32 = null,
-    /// Behave as a spring. When false the joint is rigid and overrides both the
-    /// limit and the motor (`include/box3d/types.h:655-656`).
+    /// False makes the joint rigid and overrides limits and motors (`include/box3d/types.h:655-656`).
     enableSpring: ?bool = null,
-    /// Tension the spring can sustain.
     lowerSpringForce: ?f32 = null,
-    /// Compression the spring can sustain.
     upperSpringForce: ?f32 = null,
     /// Spring stiffness in hertz.
     hertz: ?f32 = null,
-    /// Spring damping ratio, non-dimensional.
     dampingRatio: ?f32 = null,
     enableLimit: ?bool = null,
     /// Minimum length, clamped internally to a stable minimum.
@@ -192,16 +98,12 @@ pub const DistanceJointDef = struct {
     }
 };
 
-/// A motor joint: drives the relative linear and angular velocity of two bodies
-/// (`include/box3d/types.h:694-730`).
+/// Drives relative linear and angular velocity (`include/box3d/types.h:694-730`).
 pub const MotorJointDef = struct {
-    /// The shared settings.
     base: JointDef,
-    /// Desired relative linear velocity.
     linearVelocity: ?math.Vec3 = null,
     /// Maximum motor force in newtons.
     maxVelocityForce: ?f32 = null,
-    /// Desired relative angular velocity.
     angularVelocity: ?math.Vec3 = null,
     /// Maximum motor torque in newton-metres.
     maxVelocityTorque: ?f32 = null,
@@ -233,10 +135,7 @@ pub const MotorJointDef = struct {
     }
 };
 
-/// A filter joint: disables collision between two specific bodies
-/// (`include/box3d/types.h:736-742`). Nothing but the base.
 pub const FilterJointDef = struct {
-    /// The shared settings.
     base: JointDef,
 
     pub fn native(self: FilterJointDef) c.b3FilterJointDef {
@@ -246,12 +145,9 @@ pub const FilterJointDef = struct {
     }
 };
 
-/// A parallel joint: keeps the z axes of two bodies parallel through a spring,
-/// which is what holds a character upright (`include/box3d/types.h:748-765`).
+/// Keeps the bodies' z axes parallel through a spring (`include/box3d/types.h:748-765`).
 pub const ParallelJointDef = struct {
-    /// The shared settings.
     base: JointDef,
-    /// Spring stiffness in hertz.
     hertz: ?f32 = null,
     dampingRatio: ?f32 = null,
     /// Maximum spring torque, typically in newton-metres.
@@ -267,10 +163,8 @@ pub const ParallelJointDef = struct {
     }
 };
 
-/// A prismatic joint: body B slides along the x-axis of frame A and cannot
-/// rotate (`include/box3d/types.h:771-810`).
+/// Body B slides along frame A's x-axis and cannot rotate (`include/box3d/types.h:771-810`).
 pub const PrismaticJointDef = struct {
-    /// The shared settings.
     base: JointDef,
     enableSpring: ?bool = null,
     hertz: ?f32 = null,
@@ -303,21 +197,18 @@ pub const PrismaticJointDef = struct {
     }
 };
 
-/// A revolute joint: a point on B is fixed to a point on A, with rotation
-/// allowed about the z-axis (`include/box3d/types.h:816-854`).
+/// A point on B is fixed to a point on A; rotation is allowed about frame A's z-axis
+/// (`include/box3d/types.h:816-854`).
 pub const RevoluteJointDef = struct {
-    /// The shared settings.
     base: JointDef,
-    /// Body B's angle minus body A's in the reference state. This is the zero
-    /// angle for the limit (`include/box3d/types.h:824-825`).
+    /// Reference angle: body B's angle minus body A's (`include/box3d/types.h:824-825`).
     targetAngle: ?f32 = null,
     enableSpring: ?bool = null,
     hertz: ?f32 = null,
     dampingRatio: ?f32 = null,
     enableLimit: ?bool = null,
-    /// Lower limit in radians; upstream's minimum is `-0.99 * pi`.
+    /// Limits are radians; upstream clamps them to `[-0.99 * pi, 0.99 * pi]`.
     lowerAngle: ?f32 = null,
-    /// Upper limit in radians; upstream's maximum is `0.99 * pi`.
     upperAngle: ?f32 = null,
     enableMotor: ?bool = null,
     /// Maximum motor torque, typically newton-metres.
@@ -342,15 +233,13 @@ pub const RevoluteJointDef = struct {
     }
 };
 
-/// A spherical joint: a point on B is fixed to a point on A, with rotation
-/// allowed about it (`include/box3d/types.h:860-904`).
+/// A point on B is fixed to a point on A, with rotation allowed about it (`include/box3d/types.h:860-904`).
 pub const SphericalJointDef = struct {
-    /// The shared settings.
     base: JointDef,
     /// Spring that tries to align the two joint frames.
     enableSpring: ?bool = null,
-    /// Spring stiffness in hertz. Upstream notes this may be clamped internally
-    /// against the time step for stability (`include/box3d/types.h:869-871`).
+    /// Spring stiffness may be clamped against the time step for stability
+    /// (`include/box3d/types.h:869-871`).
     hertz: ?f32 = null,
     /// Spring damping ratio, non-negative.
     dampingRatio: ?f32 = null,
@@ -362,9 +251,8 @@ pub const SphericalJointDef = struct {
     coneAngle: ?f32 = null,
     /// Twist limit, centred on frame B's z-axis.
     enableTwistLimit: ?bool = null,
-    /// Lower twist limit in radians; upstream's minimum is `-0.99 * pi`.
+    /// Twist limits are radians; upstream clamps them to `[-0.99 * pi, 0.99 * pi]`.
     lowerTwistAngle: ?f32 = null,
-    /// Upper twist limit in radians; upstream's maximum is `0.99 * pi`.
     upperTwistAngle: ?f32 = null,
     enableMotor: ?bool = null,
     /// Maximum motor torque, typically newton-metres.
@@ -391,17 +279,12 @@ pub const SphericalJointDef = struct {
     }
 };
 
-/// A weld joint: connects two bodies rigidly, with springs that can soften it
+/// Weld joint with optional softening springs; the approximate solver cannot hold many bodies rigidly
 /// (`include/box3d/types.h:912-931`).
-///
-/// Upstream's note on that declaration is that Box3D's approximate solver
-/// cannot hold many bodies together rigidly.
 pub const WeldJointDef = struct {
-    /// The shared settings.
     base: JointDef,
-    /// Linear stiffness in hertz; zero means maximum stiffness.
+    /// Zero hertz means maximum stiffness for both springs.
     linearHertz: ?f32 = null,
-    /// Angular stiffness in hertz; zero means maximum stiffness.
     angularHertz: ?f32 = null,
     linearDampingRatio: ?f32 = null,
     angularDampingRatio: ?f32 = null,
@@ -417,11 +300,9 @@ pub const WeldJointDef = struct {
     }
 };
 
-/// A wheel joint: A is the chassis and B the wheel, which rotates about frame
-/// B's z-axis, translates along frame A's x-axis, and can steer
-/// (`include/box3d/types.h:937-998`).
+/// Wheel joint: A is the chassis, B the wheel; B rotates on its z-axis and slides on A's x-axis.
+/// It also steers (`include/box3d/types.h:937-998`).
 pub const WheelJointDef = struct {
-    /// The shared settings.
     base: JointDef,
     enableSuspensionSpring: ?bool = null,
     suspensionHertz: ?f32 = null,
@@ -469,9 +350,6 @@ pub const WheelJointDef = struct {
     }
 };
 
-// -- creation ----------------------------------------------------------------
-
-/// Create a distance joint (`include/box3d/box3d.h:1129`).
 pub fn createDistance(id: world_mod.WorldId, def: DistanceJointDef) Error!JointId {
     if (!world_mod.isValid(id)) return error.InvalidWorld;
     var native_def = def.native();
@@ -480,7 +358,6 @@ pub fn createDistance(id: world_mod.WorldId, def: DistanceJointDef) Error!JointI
     return joint;
 }
 
-/// Create a motor joint (`include/box3d/box3d.h:1219`).
 pub fn createMotor(id: world_mod.WorldId, def: MotorJointDef) Error!JointId {
     if (!world_mod.isValid(id)) return error.InvalidWorld;
     var native_def = def.native();
@@ -489,7 +366,6 @@ pub fn createMotor(id: world_mod.WorldId, def: MotorJointDef) Error!JointId {
     return joint;
 }
 
-/// Create a filter joint (`include/box3d/box3d.h:1294`).
 pub fn createFilter(id: world_mod.WorldId, def: FilterJointDef) Error!JointId {
     if (!world_mod.isValid(id)) return error.InvalidWorld;
     var native_def = def.native();
@@ -498,7 +374,6 @@ pub fn createFilter(id: world_mod.WorldId, def: FilterJointDef) Error!JointId {
     return joint;
 }
 
-/// Create a parallel joint (`include/box3d/box3d.h:1099`).
 pub fn createParallel(id: world_mod.WorldId, def: ParallelJointDef) Error!JointId {
     if (!world_mod.isValid(id)) return error.InvalidWorld;
     var native_def = def.native();
@@ -507,7 +382,6 @@ pub fn createParallel(id: world_mod.WorldId, def: ParallelJointDef) Error!JointI
     return joint;
 }
 
-/// Create a prismatic joint (`include/box3d/box3d.h:1309`).
 pub fn createPrismatic(id: world_mod.WorldId, def: PrismaticJointDef) Error!JointId {
     if (!world_mod.isValid(id)) return error.InvalidWorld;
     var native_def = def.native();
@@ -516,7 +390,6 @@ pub fn createPrismatic(id: world_mod.WorldId, def: PrismaticJointDef) Error!Join
     return joint;
 }
 
-/// Create a revolute joint (`include/box3d/box3d.h:1391`).
 pub fn createRevolute(id: world_mod.WorldId, def: RevoluteJointDef) Error!JointId {
     if (!world_mod.isValid(id)) return error.InvalidWorld;
     var native_def = def.native();
@@ -525,7 +398,6 @@ pub fn createRevolute(id: world_mod.WorldId, def: RevoluteJointDef) Error!JointI
     return joint;
 }
 
-/// Create a spherical joint (`include/box3d/box3d.h:1469`).
 pub fn createSpherical(id: world_mod.WorldId, def: SphericalJointDef) Error!JointId {
     if (!world_mod.isValid(id)) return error.InvalidWorld;
     var native_def = def.native();
@@ -534,7 +406,6 @@ pub fn createSpherical(id: world_mod.WorldId, def: SphericalJointDef) Error!Join
     return joint;
 }
 
-/// Create a weld joint (`include/box3d/box3d.h:1564`).
 pub fn createWeld(id: world_mod.WorldId, def: WeldJointDef) Error!JointId {
     if (!world_mod.isValid(id)) return error.InvalidWorld;
     var native_def = def.native();
@@ -543,7 +414,6 @@ pub fn createWeld(id: world_mod.WorldId, def: WeldJointDef) Error!JointId {
     return joint;
 }
 
-/// Create a wheel joint (`include/box3d/box3d.h:1604`).
 pub fn createWheel(id: world_mod.WorldId, def: WheelJointDef) Error!JointId {
     if (!world_mod.isValid(id)) return error.InvalidWorld;
     var native_def = def.native();
@@ -552,118 +422,90 @@ pub fn createWheel(id: world_mod.WorldId, def: WheelJointDef) Error!JointId {
     return joint;
 }
 
-// -- lifecycle and shared accessors ------------------------------------------
-
-/// Destroy a joint (`include/box3d/box3d.h:1014`).
-///
-/// `wake_attached` says whether the two bodies should be woken afterwards, which
-/// is what you want after changing a joint a resting scene is leaning on.
+/// Destroy a joint; `wake_attached` controls whether its bodies wake.
 pub fn destroy(id: JointId, wake_attached: bool) void {
     c.b3DestroyJoint(id, wake_attached);
 }
 
-/// True while the id names a live joint (`include/box3d/box3d.h:1017`).
 pub fn isValid(id: JointId) bool {
     return c.b3Joint_IsValid(id);
 }
 
-/// Which kind of constraint this is (`include/box3d/box3d.h:1020`).
 pub fn getType(id: JointId) JointType {
     return c.b3Joint_GetType(id);
 }
 
-/// The first attached body (`include/box3d/box3d.h:1023`).
 pub fn bodyA(id: JointId) body_mod.BodyId {
     return c.b3Joint_GetBodyA(id);
 }
 
-/// The second attached body (`include/box3d/box3d.h:1026`).
 pub fn bodyB(id: JointId) body_mod.BodyId {
     return c.b3Joint_GetBodyB(id);
 }
 
-/// The world that owns this joint (`include/box3d/box3d.h:1029`).
 pub fn world(id: JointId) world_mod.WorldId {
     return c.b3Joint_GetWorld(id);
 }
 
-/// Move the joint frame on body A (`include/box3d/box3d.h:1032`).
 pub fn setLocalFrameA(id: JointId, frame: math.Transform) void {
     c.b3Joint_SetLocalFrameA(id, frame);
 }
 
-/// The joint frame on body A (`include/box3d/box3d.h:1035`).
 pub fn localFrameA(id: JointId) math.Transform {
     return c.b3Joint_GetLocalFrameA(id);
 }
 
-/// Move the joint frame on body B (`include/box3d/box3d.h:1038`).
 pub fn setLocalFrameB(id: JointId, frame: math.Transform) void {
     c.b3Joint_SetLocalFrameB(id, frame);
 }
 
-/// The joint frame on body B (`include/box3d/box3d.h:1041`).
 pub fn localFrameB(id: JointId) math.Transform {
     return c.b3Joint_GetLocalFrameB(id);
 }
 
-/// Should the two attached bodies collide with each other?
-/// (`include/box3d/box3d.h:1044`).
 pub fn setCollideConnected(id: JointId, should_collide: bool) void {
     c.b3Joint_SetCollideConnected(id, should_collide);
 }
 
-/// Do the attached bodies collide (`include/box3d/box3d.h:1047`)?
 pub fn collideConnected(id: JointId) bool {
     return c.b3Joint_GetCollideConnected(id);
 }
 
-/// Attach application data to a joint (`include/box3d/box3d.h:1050`).
-///
-/// A joint event carries this pointer back (`include/box3d/types.h:1230`), which
-/// is how an application finds its own object from `world.jointEventSlice`.
+/// Borrowed application data; Box3D does not free it, and joint events return it.
 pub fn setUserData(id: JointId, user_data: ?*anyopaque) void {
     c.b3Joint_SetUserData(id, user_data);
 }
 
-/// The pointer set with `setUserData` (`include/box3d/box3d.h:1053`).
 pub fn userData(id: JointId) ?*anyopaque {
     return c.b3Joint_GetUserData(id);
 }
 
-/// Wake both attached bodies (`include/box3d/box3d.h:1056`).
 pub fn wakeBodies(id: JointId) void {
     c.b3Joint_WakeBodies(id);
 }
 
-/// The constraint force the solver is currently applying, in newtons
-/// (`include/box3d/box3d.h:1059`).
+/// Constraint force applied by the solver, in newtons.
 pub const constraintForce = c.b3Joint_GetConstraintForce;
 
-/// The constraint torque the solver is currently applying
-/// (`include/box3d/box3d.h:1062`).
+/// Constraint torque applied by the solver, in newton-metres.
 pub const constraintTorque = c.b3Joint_GetConstraintTorque;
 
-/// How far the joint is from its rest separation
-/// (`include/box3d/box3d.h:1065`).
+/// Linear separation from the joint's rest state.
 pub const linearSeparation = c.b3Joint_GetLinearSeparation;
 
-/// How far the joint is from its rest angle (`include/box3d/box3d.h:1068`).
+/// Angular separation from the joint's rest angle.
 pub const angularSeparation = c.b3Joint_GetAngularSeparation;
 
-/// Constraint stiffness and damping (`include/box3d/box3d.h:1074`).
+/// Set constraint stiffness in hertz and damping ratio.
 pub fn setConstraintTuning(id: JointId, hertz: f32, damping_ratio: f32) void {
     c.b3Joint_SetConstraintTuning(id, hertz, damping_ratio);
 }
 
-/// The joint's constraint tuning (`include/box3d/box3d.h:1077`).
 pub const ConstraintTuning = struct {
     hertz: f32,
     damping_ratio: f32,
 };
 
-/// Read the joint's constraint tuning. Advanced, upstream says
-/// (`include/box3d/box3d.h:1075`).
 pub fn constraintTuning(id: JointId) ConstraintTuning {
     var hertz: f32 = 0;
     var damping_ratio: f32 = 0;
@@ -671,24 +513,20 @@ pub fn constraintTuning(id: JointId) ConstraintTuning {
     return .{ .hertz = hertz, .damping_ratio = damping_ratio };
 }
 
-/// The force above which a joint event is reported, in newtons
-/// (`include/box3d/box3d.h:1080`).
+/// Force threshold for reporting joint events, in newtons.
 pub fn setForceThreshold(id: JointId, threshold: f32) void {
     c.b3Joint_SetForceThreshold(id, threshold);
 }
 
-/// The force threshold (`include/box3d/box3d.h:1083`)?
 pub fn forceThreshold(id: JointId) f32 {
     return c.b3Joint_GetForceThreshold(id);
 }
 
-/// The torque above which a joint event is reported, in newton-metres
-/// (`include/box3d/box3d.h:1086`).
+/// Torque threshold for reporting joint events, in newton-metres.
 pub fn setTorqueThreshold(id: JointId, threshold: f32) void {
     c.b3Joint_SetTorqueThreshold(id, threshold);
 }
 
-/// The torque threshold (`include/box3d/box3d.h:1089`)?
 pub fn torqueThreshold(id: JointId) f32 {
     return c.b3Joint_GetTorqueThreshold(id);
 }

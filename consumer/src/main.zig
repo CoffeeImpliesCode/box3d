@@ -1,82 +1,36 @@
 // SPDX-License-Identifier: MIT
 //
-//! Consumes the `box3d` package the way an outside project would.
-//!
-//! Everything here goes through the published surface only: `dep.module` in
-//! `build.zig`, and `@import("box3d")` here. No path reaches into the library's
-//! own tree, so if this builds and produces the answers below, the module
-//! contract is real.
-//!
-//! The scene is different from `smoke.zig`'s on purpose. Where the smoke drops a
-//! cube and watches it land, this one asks three questions a consumer actually
-//! has:
-//!
-//!   1. Does a body that is already resting where its geometry says it should
-//!      stay there, rather than being pushed out or sinking?
-//!   2. Does a distance joint confine a dynamic body to its rest length from a
-//!      static anchor - on every step of a swing, not only at the end - and
-//!      leave it hanging directly below once gravity and drag have settled it?
-//!   3. Does a ray cast against that same world report the surfaces the geometry
-//!      puts in its path?
-//!
-//! The answers are derived from the scene, so a mismatch is a real fault rather
-//! than a restatement of what the library just did, and any mismatch exits
-//! non-zero.
-//!
-//! The same source builds against a linked package and against a runtime-loaded
-//! one. `box3d.runtime_loaded` is a comptime constant, so the difference is one
-//! branch and no duplicated program: in the runtime-loaded build the provider is
-//! named on the command line (`--provider <path>`) or in `BOX3D_TEST_PROVIDER`,
-//! loaded once, and the same answers follow.
+//! Exercises the public `box3d` module from a dependent package.
+//! Checks resting contact, a distance-joint swing and a ray cast.
+//! Supports linked and runtime-loaded configurations.
 
 const std = @import("std");
 const box3d = @import("box3d");
 
-/// A shared object exporting the `b3*` entry points of `box3d/box3d.h` and
-/// the ten `box3dAbi_*` entry points of `build_support/box3d_abi_bridge.h`,
-/// named by the environment in a runtime-loading build. The ten are this
-/// package's own bridge source unit, so a provider built before it existed is
-/// short exactly those ten, and `load` refuses it by name rather than by
-/// count.
+/// Environment variable used when no `--provider` path is supplied.
 const provider_variable = "BOX3D_TEST_PROVIDER";
 
-/// The ground: half-extents (50, 10, 50) centred at y = -10, so its top face is
-/// at y = 0.
+/// Ground half-extents; its top face lies at y = 0.
 const ground_half: box3d.Vec3 = .{ .x = 50, .y = 10, .z = 50 };
 const ground_centre: box3d.Pos = .{ .x = 0, .y = -10, .z = 0 };
-/// The unit cube's half-extent, so its AABB is its centre plus and minus 1.
 const cube_half: f32 = 1;
-/// A unit cube at density 1 has volume 8, so mass 8.
 const cube_mass: f32 = 8;
-/// Where the joint anchors on the ground, and how long the joint is.
 const anchor: box3d.Pos = .{ .x = 2, .y = 5, .z = 0 };
 const anchor_distance: f32 = 1.5;
-/// The sphere's own radius. The joint does not use it: the far end of the
-/// segment is the sphere's centre, not its surface.
+/// Sphere radius; the distance joint attaches at its centre.
 const probe_radius: f32 = 0.25;
-/// Where the sphere starts: level with the anchor, a whole segment to its +x
-/// side. That puts it at exactly the rest length, so the joint starts
-/// satisfied, and it puts gravity across the segment rather than along it.
+/// Starts level with the anchor and one joint length to the side.
 const release: box3d.Pos = .{
     .x = anchor.x + anchor_distance,
     .y = anchor.y,
     .z = anchor.z,
 };
-/// Drag on the sphere, in 1/s. Box3D scales a body's velocity by
-/// `1 / (1 + h * linearDamping)` in every substep (`src/solver.c:91-93`), and
-/// nothing else in this scene takes energy out of the sphere, so a rigid
-/// pendulum without it would still be at full amplitude when the run ended.
+/// Drag lets the pendulum settle during the finite run.
 const probe_damping: f32 = 2;
-/// Ten seconds of swing, counted in `time_step`s. The sphere is kept awake, so
-/// these steps follow the drag all the way down instead of freezing it wherever
-/// Box3D's sleep threshold happened to catch it.
+/// Ten seconds of swing; sleep is disabled so drag, not the sleep threshold, settles it.
 const swing_steps: usize = 600;
-/// The same anchor measured in the ground body's own frame. A joint's local
-/// frames are measured from the attached body's origin rather than in world
-/// space (`include/box3d/types.h:599-602`), and the solver transforms each one
-/// by its body's world transform before it measures the joint
-/// (`src/joint.c:1213-1215`). Passing `anchor` unchanged therefore anchors the
-/// joint a whole `ground_centre` lower than where it was meant to sit.
+/// Joint frames are body-local, so this subtracts the ground body's origin.
+/// See `include/box3d/types.h` and `src/joint.c`.
 const anchor_on_ground: box3d.Vec3 = .{
     .x = anchor.x - ground_centre.x,
     .y = anchor.y - ground_centre.y,
@@ -84,31 +38,18 @@ const anchor_on_ground: box3d.Vec3 = .{
 };
 const time_step: f32 = 1.0 / 60.0;
 const sub_steps: c_int = 4;
-/// Two seconds of settling for the cube: long enough for it to stop moving.
+/// Two seconds of cube settling.
 const settle_steps: usize = 120;
-/// The resting contact tolerance, the one upstream's own test of this scene uses
-/// (`test/test_world.c:96-98`).
+/// Tolerance for the resting-height check.
 const rest_tolerance: f32 = 0.01;
-/// The band the joint's own geometry stays inside. Box3D solves a rigid
-/// distance joint as a soft constraint - 60 hertz and damping ratio 2 by
-/// default (`src/joint.c:30-31`), turned into bias and stiffness by
-/// `b3MakeSoft` (`src/solver.h:264-304`) - so the segment is held to a
-/// fraction of a millimetre rather than exactly. A twentieth of the joint
-/// length is well above that error and well below what a joint that is present
-/// and doing nothing allows: at the world's own 10 m/s^2 gravity
-/// (`src/types.c:13-14`) an unconfined sphere falls half this band in three
-/// steps.
+/// Tolerance for the soft distance constraint's solver error.
+/// A missing joint lets gravity move the sphere beyond this band.
 const joint_tolerance: f32 = 0.02;
 
-/// A runtime-loading build has no provider until one is named.
+/// Error returned when a runtime-loading build has no provider.
 const ConfigurationError = error{NoProviderConfigured};
-/// What went wrong when a checked answer was not the expected one.
 const ConsumerError = error{ConsumerCheckFailed};
 
-/// What a helper that reports an answer and then checks it can return: the
-/// answer was wrong, or the writer it reports through failed. The write failure
-/// is propagated rather than swallowed, so a full or closed output stops the
-/// run instead of silently truncating the report.
 const CheckError = ConsumerError || std.Io.Writer.Error;
 
 pub fn main(init: std.process.Init) !void {
@@ -118,8 +59,7 @@ pub fn main(init: std.process.Init) !void {
     var stdout = std.Io.File.stdout().writerStreaming(io, &buffer);
     const w = &stdout.interface;
 
-    // In a runtime-loaded build every call below goes through a table that this one
-    // call fills. In a linked build the branch is not analyzed at all.
+    // Load the provider before any call through the runtime table.
     if (comptime box3d.runtime_loaded) {
         box3d.load(.{ .path = try providerRequest(init) }) catch |err| {
             std.debug.print("consumer: loading the provider failed: {t}\n", .{err});
@@ -128,8 +68,7 @@ pub fn main(init: std.process.Init) !void {
     }
 
     try w.print("box3d consumer\n", .{});
-    // Through the raw escape hatch, so these lines name the C library this build
-    // reached rather than constants compiled into this program.
+    // Query the provider so the report reflects the loaded or linked library.
     const version = box3d.base.version();
     try w.print("{s} C library reports version {d}.{d}.{d}, double precision {s}\n", .{
         if (box3d.runtime_loaded) "loaded" else "linked",
@@ -142,16 +81,11 @@ pub fn main(init: std.process.Init) !void {
     const world = try box3d.world.create(.{});
     defer box3d.world.destroy(world);
 
-    // -- the ground ----------------------------------------------------------
-
     const ground = try box3d.body.create(world, .{ .position = ground_centre });
     const ground_hull = box3d.shape.boxHull(ground_half.x, ground_half.y, ground_half.z);
     _ = try box3d.shape.createHull(ground, .{}, &ground_hull.base);
 
-    // -- a cube already resting where its geometry says it should ------------
-    //
-    // Created at y = 1, which is the ground's top face plus the cube's half
-    // extent, so it starts in contact rather than being dropped into contact.
+    // Start in contact instead of dropping the cube onto the ground.
 
     const cube = try box3d.body.create(world, .{
         .bodyType = box3d.dynamicBody,
@@ -169,33 +103,14 @@ pub fn main(init: std.process.Init) !void {
     try checkFloat(w, "resting height (m)", resting_height, resting.y, rest_tolerance);
     try w.print("  cube is asleep: {s}\n", .{if (box3d.body.isAwake(cube)) "no" else "yes"});
 
-    // -- a dynamic sphere on a distance joint --------------------------------
-    //
-    // A distance joint is a segment, not a hinge. It holds the two frames
-    // `anchor_distance` apart and says nothing about which side of the anchor
-    // the sphere is on (`include/box3d/types.h:643-688`; the solve acts along
-    // the segment alone, `src/distance_joint.c:381-384` and `:498-522`). So a
-    // sphere placed straight above the anchor is not "let go and caught on the
-    // way down": with gravity and the segment collinear that is an equilibrium,
-    // and a rigid joint holds an equilibrium as well as it holds anything else.
-    // A symmetric scene like that measures nothing about a swing. This sphere
-    // starts level with the anchor a whole segment to its +x side instead,
-    // where gravity is perpendicular to the segment and has to swing it.
-    //
-    // What is left is a pendulum, and every answer below is read off that
-    // geometry rather than off where the solver happened to stop: the joint
-    // confines the sphere to an arc whose low point is one segment below the
-    // anchor, a sphere released from rest swings through that low point, and
-    // drag brings the swing down until the segment hangs vertical, which is the
-    // only place on the arc where the segment alone can balance gravity.
+    // Start beside the anchor; a vertical segment would be a static equilibrium, not a swing.
+    // Gravity across the segment tests the pendulum's arc and settled equilibrium.
 
     const probe = try box3d.body.create(world, .{
         .bodyType = box3d.dynamicBody,
         .position = release,
         .linearDamping = probe_damping,
-        // Sleeping would freeze the sphere wherever its speed first stayed
-        // below `sleepThreshold` (`src/types.c:37`) for half a second, which is
-        // a fact about that threshold rather than about the joint.
+        // Keep the sphere awake until drag settles; sleep would freeze it at a threshold crossing.
         .enableSleep = false,
     });
     _ = try box3d.shape.createSphere(probe, .{ .density = 1.0 }, box3d.shape.sphere(probe_radius));
@@ -204,27 +119,16 @@ pub fn main(init: std.process.Init) !void {
         .base = .{
             .bodyIdA = ground,
             .bodyIdB = probe,
-            // Frame A is a point on the ground body, so it is `anchor_on_ground`:
-            // the world anchor measured back from that body's own origin rather
-            // than in world coordinates. Frame B sits on the sphere at its own
-            // origin, which is what makes this a plain distance between two
-            // points.
+            // Frame A is ground-relative; frame B is at the sphere body's origin.
             .localFrameA = .{ .p = anchor_on_ground, .q = box3d.identityQuat },
         },
-        // `enableSpring` is left at its default of false, which makes the
-        // constraint rigid rather than a spring
-        // (`include/box3d/types.h:655-657`), so the rest length is the length
-        // the segment settles at.
+        // Leave the spring disabled to keep the distance constraint rigid.
         .length = anchor_distance,
         .enableMotor = false,
         .enableLimit = false,
     });
 
-    // Every step is measured, not just the last: a joint that let go halfway
-    // through the swing would pass a check that only looked at the end.
-    //
-    // The arc's low point is one segment below the anchor, which is also the
-    // height the sphere starts at: it is released level with the anchor.
+    // Check the full path, not only the final point, to catch a joint failure mid-swing.
     const arc_low: f64 = anchor.y - anchor_distance;
     const release_height: f64 = release.y;
 
@@ -244,26 +148,14 @@ pub fn main(init: std.process.Init) !void {
     const hung = box3d.body.position(probe);
     // The swing went through that low point instead of stalling on the way.
     try checkAtMost(w, "miss at the arc's low point (m)", joint_tolerance, arc_low - lowest);
-    // Gravity moved it, and nothing could have moved it the other way: it never
-    // rose above the height it was released at.
+    // The sphere must not rise above its release height.
+    // At rest, the segment should hang vertically below the anchor.
     try checkAtMost(w, "rise above the release (m)", joint_tolerance, highest - release_height);
-    // It came to rest hanging under the anchor. The sideways offset is the
-    // statement that the segment ended up vertical rather than at some other
-    // point of the swing.
     try checkFloat(w, "hung height (m)", arc_low, hung.y, joint_tolerance);
     try checkAtMost(w, "hung sideways offset (m)", joint_tolerance, sidewaysOffset(hung));
 
-    // -- a ray against the same world ----------------------------------------
-    //
-    // The second argument is a translation, not a second endpoint: the native
-    // call puts both straight into its ray input as given, with a maximum
-    // fraction of one (`src/physics_world.c:2999`). So this ray runs from
-    // (5, 10, 5) to (0, -10, 5). `fraction` is that parameter and not a distance
-    // along the ray: the hull test divides the plane distance by
-    // `dot(normal, translation)` (`src/hull.c:2481`) and rebuilds the point as
-    // `origin + fraction * translation` (`src/hull.c:2508,2510`), and the tree
-    // divides its slab distances by the ray's own length for the same reason
-    // (`src/aabb.c:171-173`).
+    // The ray's second vector is a translation, from (5, 10, 5) to (0, -10, 5).
+    // It intersects the ground halfway along the ray, at x = 2.5.
 
     const filter = (box3d.QueryFilterDef{}).native();
     var hit: box3d.RayResult = undefined;
@@ -278,11 +170,7 @@ pub fn main(init: std.process.Init) !void {
         std.debug.print("consumer: a ray that should have hit the ground did not\n", .{});
         return error.ConsumerCheckFailed;
     }
-    // The ground's top face is at y = 0, which is 10 units of the 20 this ray
-    // falls through, so the fraction is half however far the ray also travels
-    // sideways, and 5 of its units of x have gone by then. Nothing else is in
-    // the way: the cube is a unit wide around the origin, and the sphere hangs
-    // at z = 0, five metres from the ray.
+    // The ground is the first hit; its top face intersects the ray at fraction 0.5.
     try checkFloat(w, "ground hit fraction", 0.5, hit.fraction, 0.0001);
     try checkFloat(w, "ground hit height (m)", 0.0, hit.point.y, 0.001);
     try checkFloat(w, "ground hit offset (m)", 2.5, hit.point.x, 0.001);
@@ -292,11 +180,7 @@ pub fn main(init: std.process.Init) !void {
     try w.flush();
 }
 
-/// The provider this run should load, from `--provider <path>` or from
-/// `BOX3D_TEST_PROVIDER`.
-///
-/// Both are explicit. Nothing here looks in a default location, and a build that
-/// was not told which file to load says so rather than loading something else.
+/// Gets the provider path from `--provider` or `BOX3D_TEST_PROVIDER`.
 fn providerRequest(init: std.process.Init) ConfigurationError![]const u8 {
     const args = init.minimal.args.toSlice(init.arena.allocator()) catch
         return noProvider();
@@ -311,8 +195,7 @@ fn providerRequest(init: std.process.Init) ConfigurationError![]const u8 {
         return noProvider();
 }
 
-/// Say which variable is missing. An error name on its own would send the next
-/// person into the loader instead of to the command line.
+/// Reports how to configure a missing runtime provider.
 fn noProvider() ConfigurationError {
     std.debug.print(
         "consumer: this is a runtime-loading build. Pass --provider <path>, or " ++
@@ -347,18 +230,11 @@ fn checkFloat(
 
 /// How far `at` sits from the anchor, in metres.
 fn reachFromAnchor(at: box3d.Pos) f64 {
-    // `b3SubPos` returns a `Pos`, which is not a `Vec3` in large world mode, so
-    // the difference is narrowed before its length is taken
-    // (`include/box3d/math_functions.h:87-95`, `math_functions.h:689,658`).
+    // Convert to Vec3 before measuring; large-world `Pos` fields are double.
     return box3d.math.length(box3d.math.toVec3(box3d.math.subPos(at, anchor)));
 }
 
-/// How far `at` sits from the anchor's vertical line, in metres.
-///
-/// Taken in `f64` rather than through `math`, because a `Pos` field is `double`
-/// in large world mode and `float` otherwise
-/// (`include/box3d/math_functions.h:74-90`) and this consumer wants the same
-/// arithmetic in both precision modes.
+/// Measures horizontal distance from the anchor in `f64` for both precision modes.
 fn sidewaysOffset(at: box3d.Pos) f64 {
     const dx = @as(f64, at.x) - @as(f64, anchor.x);
     const dz = @as(f64, at.z) - @as(f64, anchor.z);

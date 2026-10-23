@@ -1,25 +1,3 @@
-# devenv input pin for the box3d SDK.
-#
-# The nixpkgs channel is pinned by revision so a shell is reproducible from the
-# lock. The matching flake input lives in flake.nix and is pinned independently,
-# because the two entry points resolve in different contexts.
-#
-# There is deliberately no `flake:` key. This file carried `flake: false`, and
-# that key is what stopped Box2D, fast_float and Lua before they evaluated
-# anything: with it, devenv's `nixpkgs` input is a plain source path carrying no
-# `lib`, so every devenv subcommand dies inside bootstrap at `lib = nixpkgs.lib`
-# with `error: attribute 'lib' missing`. Those three are OBSERVED, in
-# `box2d-devenv-info.log`, `fast_float-devenv-info.log` and
-# `lua-devenv-info.log` of run `20261004T175328Z`.
-#
-# Box3D is not one of those three. It was not in that run and has had no devenv
-# run at all, so nothing here is an observed Box3D result: the deletion is a
-# repair read out of the sibling receipts and is PENDING-VERIFICATION until a
-# devenv command is run against this directory. What is SOURCE-CONFIRMED here
-# is the pin itself, which is unchanged.
-#
-# devenv.lock is not written here: the driver owns locks.
-#
 # SPDX-License-Identifier: MIT
 
 inputs:
