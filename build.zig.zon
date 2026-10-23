@@ -138,6 +138,5 @@
         "README.md",
         "README.zig.md",
         // Fork-authored continuous integration, which walks this same list.
-        ".github",
     },
 }
