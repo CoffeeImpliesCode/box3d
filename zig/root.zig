@@ -2,7 +2,7 @@
 //
 //! Typed Zig facade for Box3D.
 //! Upstream: erincatto/box3d v0.1.0.
-//! This package is developed and gated against Zig 0.16.0.
+//! This package is developed and gated against Zig 0.17.0.
 
 const std = @import("std");
 

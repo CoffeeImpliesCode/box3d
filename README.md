@@ -1,6 +1,6 @@
 # box3d
 
-Box3D v0.1.0 is Erin Catto's 3D physics engine, packaged for Zig 0.16.
+Box3D v0.1.0 is Erin Catto's 3D physics engine, packaged for Zig 0.17.0.
 This package builds the upstream C17 library and provides a typed Zig facade.
 
 ## Source deviations from upstream
@@ -30,9 +30,11 @@ Add the package to `build.zig.zon`:
 
 ```zig
 .dependencies = .{
-    .box3d = .{ .path = "../box3d" },
+    .box3d = .{ .path = "vendor/box3d" },
 },
 ```
+
+Zig 0.17 requires path dependencies to stay inside the consuming package root.
 
 Import the module from `build.zig`:
 
@@ -61,4 +63,4 @@ On Unix, `box3d.pc` records `-lm -pthread` as private link flags; for shared bui
 | `-Ddisable-simd=true` | Target-dependent | Selects scalar kernels. Unset, SIMD follows upstream defaults except on 32-bit ARM, which uses scalar kernels. |
 | `-Dvalidate=false` | `true` | Disables validation. Validation is effective only when `NDEBUG` is absent. |
 
-`-Dtarget` and `-Doptimize` are standard Zig build options. There is no system-library mode. Useful steps include `zig build`, `zig build test`, `zig build upstream-test`, and `zig build check`.
+`-Dtarget` and `-Doptimize` are standard Zig build options. There is no system-library mode. Useful steps include `zig build`, `zig build test`, `zig build smoke`, `zig build consumer`, `zig build upstream-test`, and `zig build check`.

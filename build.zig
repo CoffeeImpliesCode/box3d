@@ -1,4 +1,4 @@
-//! Zig 0.16 build for Box3D, erincatto's 3D physics engine.
+//! Zig 0.17.0 build for Box3D, erincatto's 3D physics engine.
 const std = @import("std");
 
 const manifest = @import("build.zig.zon");
@@ -173,7 +173,7 @@ const CUnit = enum {
 };
 
 const Options = struct {
-    linkage: std.builtin.LinkMode,
+    linkage: std.lang.LinkMode,
     /// Whether the facade dispatches through a loaded table.
     runtime_loaded: bool,
     /// Upstream's public precision definition; it changes the ABI.
@@ -302,14 +302,14 @@ fn preprocessedTranslateHeader(
         run.addArg("-target");
         run.addArg(triple);
     }
-    run.addPrefixedDirectoryArg("-I", b.path("include"));
+    run.addDirectoryArg2(b.path("include"), .{ .prefix = "-I" });
     if (opts.double_precision) run.addArg("-DBOX3D_DOUBLE_PRECISION=1");
     if (opts.linkage == .dynamic) run.addArg("-DBOX3D_DLL=1");
     run.addArg("-o");
-    const preprocessed = run.addOutputFileArg("box3d-translate.c");
+    const preprocessed = run.addOutputFileArg2("box3d-translate.c", .{});
     run.addArg("-MD");
-    _ = run.addPrefixedDepFileOutputArg("-MF", "box3d-translate.d");
-    run.addFileArg(b.path(translate_header));
+    _ = run.addDepFileOutputArg2("box3d-translate.d", .{ .prefix = "-MF" });
+    run.addFileArg2(b.path(translate_header), .{});
     return preprocessed;
 }
 
@@ -321,9 +321,9 @@ fn addPlatformLibraries(mod: *std.Build.Module, target: std.Build.ResolvedTarget
 fn addCoreLibrary(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
+    optimize: std.lang.Optimize,
     opts: Options,
-    linkage: std.builtin.LinkMode,
+    linkage: std.lang.LinkMode,
     name: []const u8,
 ) *std.Build.Step.Compile {
     const c_lib = b.addLibrary(.{
@@ -377,7 +377,7 @@ fn addCoreLibrary(
 fn addGraph(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
+    optimize: std.lang.Optimize,
     opts: Options,
     public: bool,
 ) Graph {
@@ -441,7 +441,7 @@ fn addGraph(
 fn facadeModule(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
+    optimize: std.lang.Optimize,
     graph_modules: Graph,
     source: []const u8,
 ) *std.Build.Module {
@@ -460,7 +460,7 @@ fn facadeModule(
 fn staticCoreForTests(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
+    optimize: std.lang.Optimize,
     opts: Options,
     delivered: *std.Build.Step.Compile,
 ) *std.Build.Step.Compile {
@@ -479,7 +479,7 @@ fn staticCoreForTests(
 fn addUpstreamTestApp(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
+    optimize: std.lang.Optimize,
     opts: Options,
     static_core: *std.Build.Step.Compile,
     name: []const u8,
@@ -517,7 +517,7 @@ fn addTargetCheck(
     b: *std.Build,
     step: *std.Build.Step,
     query: std.Target.Query,
-    optimize: std.builtin.OptimizeMode,
+    optimize: std.lang.Optimize,
     opts: Options,
 ) void {
     const cross_target = b.resolveTargetQuery(query);
@@ -554,92 +554,56 @@ fn addTargetCheck(
     ).step);
 }
 
-/// Run the separate package that imports the published facade.
-fn runConsumer(
+/// Build the external consumer through its package dependency.
+fn addConsumer(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
+    optimize: std.lang.Optimize,
     opts: Options,
 ) *std.Build.Step.Run {
-    // Preserve the original target query; resolving it early loses target details.
-    const query = target.query;
-    const triple = query.zigTriple(b.allocator) catch @panic("box3d: unspellable target");
+    const triple = target.query.zigTriple(b.allocator) catch @panic("OOM");
     defer b.allocator.free(triple);
-    const cpu = query.serializeCpuAlloc(b.allocator) catch @panic("box3d: unspellable CPU");
+    const cpu = target.query.serializeCpuAlloc(b.allocator) catch @panic("OOM");
     defer b.allocator.free(cpu);
 
-    // Invoke the compiler running this build, not a separate PATH toolchain.
     const run = b.addSystemCommand(&.{ b.graph.zig_exe, "build" });
     run.setName("consumer package");
-    run.setCwd(b.path("consumer"));
-    run.addArg(if (hostCanExecute(b, target)) "run" else "install");
+    // Keep the caller's cwd for relative cache and Zig library environment paths.
+    run.addArg("--build-file");
+    run.addFileArg2(b.path("consumer/build.zig"), .{ .make_absolute = true });
+    for ([_][]const u8{ "ZIG_GLOBAL_CACHE_DIR", "ZIG_LIB_DIR" }) |key| {
+        if (b.graph.environ_map.get(key)) |value| run.setEnvironmentVariable(key, value);
+    }
+    run.addArg("consumer");
     run.addArg(b.fmt("-Dtarget={s}", .{triple}));
-    // Preserve the target's CPU model and feature overrides in the nested build.
     run.addArg(b.fmt("-Dcpu={s}", .{cpu}));
     run.addArg(b.fmt("-Doptimize={s}", .{@tagName(optimize)}));
-    run.addArg(b.fmt("-Druntime={}", .{opts.runtime_loaded}));
-    run.addArg(b.fmt("-Ddouble-precision={}", .{opts.double_precision}));
-    run.addArg(b.fmt("-Ddisable-simd={}", .{resolveDisableSimd(opts, target)}));
-    run.addArg(b.fmt("-Dvalidate={}", .{opts.validate}));
     run.addArg(b.fmt("-Dlinkage={s}", .{@tagName(opts.linkage)}));
-    if (b.enable_darling) run.addArg("-fdarling");
-    if (b.enable_qemu) run.addArg("-fqemu");
-    if (b.enable_rosetta) run.addArg("-frosetta");
-    if (b.enable_wasmtime) run.addArg("-fwasmtime");
-    if (b.enable_wine) run.addArg("-fwine");
-    if (b.libc_runtimes_dir) |runtimes| run.addArgs(&.{ "--libc-runtimes", runtimes });
-    // Keep the nested build on this SDK's fixed `-j8` job count.
-    run.addArg("-j8");
-    run.addArg("--summary");
-    run.addArg("all");
-    // Give the nested graph its own manifest cache.
-    if (b.cache_root.path) |cache| {
-        run.addArg("--cache-dir");
-        run.addArg(b.fmt("{s}/consumer", .{cache}));
+    run.addArg(b.fmt("-Druntime={s}", .{if (opts.runtime_loaded) "true" else "false"}));
+    run.addArg(b.fmt("-Ddouble-precision={s}", .{if (opts.double_precision) "true" else "false"}));
+    if (opts.disable_simd) |disable_simd| {
+        run.addArg(b.fmt("-Ddisable-simd={s}", .{if (disable_simd) "true" else "false"}));
     }
-    // Forward the global cache selected by the parent build.
-    if (b.graph.global_cache_root.path) |global_cache| {
-        run.addArg("--global-cache-dir");
-        run.addArg(global_cache);
-    }
-    // Forward only an explicit prefix, resolved against this build's root.
-    const default_prefix = b.build_root.join(b.allocator, &.{"zig-out"}) catch @panic("OOM");
-    if (!std.mem.eql(u8, b.install_prefix, default_prefix)) {
-        const prefix = if (std.fs.path.isAbsolute(b.install_prefix))
-            b.install_prefix
-        else
-            b.pathJoin(&.{ b.graph.cache.cwd, b.install_prefix });
-        run.addArg("--prefix");
-        run.addArg(prefix);
-    }
-    // Delimit caller arguments so the consumer receives them.
-    if (b.args) |args| {
-        run.addArg("--");
-        run.addArgs(args);
-    }
+    run.addArg(b.fmt("-Dvalidate={s}", .{if (opts.validate) "true" else "false"}));
+    run.addThirdPartyEnabledArgDarling(.{ .enabled = "-fdarling" });
+    run.addThirdPartyEnabledArgQemu(.{ .enabled = "-fqemu" });
+    run.addThirdPartyEnabledArgRosetta(.{ .enabled = "-frosetta" });
+    run.addThirdPartyEnabledArgWasmtime(.{ .enabled = "-fwasmtime" });
+    run.addThirdPartyEnabledArgWine(.{ .enabled = "-fwine" });
+    run.addArg("--cache-dir");
+    run.addDirectoryArg2(
+        .{ .relative = .{ .base = .local_cache, .sub_path = "consumer" } },
+        .{ .make_absolute = true },
+    );
+    run.addArg("--prefix");
+    run.addDirectoryArg2(
+        .{ .relative = .{ .base = .install_prefix } },
+        .{ .make_absolute = true },
+    );
+    run.addArg("--");
+    run.addPassthruArgs();
     run.has_side_effects = true;
     return run;
-}
-
-/// Matches Step.Run executor selection for the libc-linked consumer. Foreign
-/// glibc execution also requires libc runtimes.
-fn hostCanExecute(b: *std.Build, target: std.Build.ResolvedTarget) bool {
-    const host = &b.graph.host.result;
-    const candidate = &target.result;
-    const options: std.zig.system.GetExternalExecutorOptions = .{
-        .allow_darling = b.enable_darling,
-        .allow_qemu = b.enable_qemu,
-        .allow_wasmtime = b.enable_wasmtime,
-        .allow_wine = b.enable_wine,
-        .qemu_fixes_dl = candidate.isGnuLibC() and b.libc_runtimes_dir != null,
-        .link_libc = true,
-    };
-    return switch (std.zig.system.getExternalExecutor(b.graph.io, host, candidate, options)) {
-        .native, .rosetta => true,
-        .qemu => !candidate.isGnuLibC() or b.libc_runtimes_dir != null,
-        .wine, .wasmtime, .darling => true,
-        .bad_dl, .bad_os_or_cpu => false,
-    };
 }
 
 /// Write a relocatable pkg-config file with ABI macros and static-link dependencies.
@@ -702,7 +666,7 @@ fn targetHasDynamicLinker(target: std.Build.ResolvedTarget) bool {
 /// Reject shared linkage when the target OS has no dynamic linker.
 fn requireSupportedLinkage(
     target: std.Build.ResolvedTarget,
-    requested: std.builtin.LinkMode,
+    requested: std.lang.LinkMode,
 ) void {
     if (requested == .dynamic and !targetHasDynamicLinker(target)) {
         std.debug.panic(
@@ -739,7 +703,7 @@ pub fn build(b: *std.Build) void {
 
     const opts: Options = .{
         .linkage = b.option(
-            std.builtin.LinkMode,
+            std.lang.LinkMode,
             "linkage",
             "Deliver the native library as a static archive (the default) or " ++
                 "as a real shared object with upstream's own file name and " ++
@@ -813,7 +777,7 @@ pub fn build(b: *std.Build) void {
     // Ensure the smoke program runs instead of reusing a cached result.
     const run_smoke = b.addRunArtifact(smoke);
     run_smoke.has_side_effects = true;
-    if (b.args) |args| run_smoke.addArgs(args);
+    run_smoke.addPassthruArgs();
     b.step("smoke", "Run the smoke program").dependOn(&run_smoke.step);
 
     // `tests.zig` names the test blocks; a re-export-only root discovers none.
@@ -837,7 +801,7 @@ pub fn build(b: *std.Build) void {
     );
     const run_upstream = b.addRunArtifact(upstream_app);
     run_upstream.has_side_effects = true;
-    if (b.args) |args| run_upstream.addArgs(args);
+    run_upstream.addPassthruArgs();
     b.step(
         "upstream-test",
         "Build and run upstream's own C unit tests against the compiled core",
@@ -857,8 +821,8 @@ pub fn build(b: *std.Build) void {
 
     b.step(
         "consumer",
-        "Build the independent dep.module(\"box3d\") consumer, and run it when this host can execute it",
-    ).dependOn(&runConsumer(b, target, optimize, opts).step);
+        "Build and run the standalone consumer package when possible",
+    ).dependOn(&addConsumer(b, target, optimize, opts).step);
 
     const disable_simd = resolveDisableSimd(opts, target);
     std.debug.print(

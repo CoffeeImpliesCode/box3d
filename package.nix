@@ -86,7 +86,7 @@ stdenv.mkDerivation {
   meta = {
     description = "Box3D, a 3D physics engine for games";
     longDescription = ''
-      Box3D v0.1.0 packaged for Zig 0.16: the complete upstream C17 core, its
+      Box3D v0.1.0 packaged for Zig 0.17: the complete upstream C17 core, its
       eight public headers, the generated pkg-config metadata and the licence
       and provenance records, with a typed Zig module and a runtime-loading
       build alongside. The samples, benchmarks and Doxygen manual are retained

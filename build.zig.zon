@@ -3,7 +3,7 @@
     .name = .box3d,
     .version = "0.1.0",
     .fingerprint = 0xa2c3cdfc66230ba7,
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0",
 
     .dependencies = .{},
 
@@ -39,9 +39,7 @@
         "devenv.nix",
         "devenv.yaml",
         ".envrc",
-        "consumer/build.zig",
-        "consumer/build.zig.zon",
-        "consumer/src/main.zig",
+        "consumer",
         "UPSTREAM.sha256",
         "tools",
         "LICENSE",

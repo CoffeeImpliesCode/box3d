@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: MIT
 
 {
-  description = "Box3D v0.1.0, Erin Catto's 3D physics engine, packaged for Zig 0.16";
+  description = "Box3D v0.1.0, Erin Catto's 3D physics engine, packaged for Zig 0.17";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/c7def046b9a883d46974757852106483d741586f";
+    nixpkgs.url = "github:NixOS/nixpkgs/02c087f3fe673c9e317f206a627cb6b910336dbe";
   };
 
   outputs = { self, nixpkgs }:
@@ -24,7 +24,7 @@
         let
           mk = linkage: pkgs.callPackage ./package.nix {
             inherit linkage;
-            zig = pkgs.zig_0_16;
+            zig = pkgs.zig_0_17;
           };
         in
         {
@@ -37,7 +37,7 @@
 
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
-          packages = [ pkgs.zig_0_16 pkgs.gnumake pkgs.pkg-config ];
+          packages = [ pkgs.zig_0_17 pkgs.gnumake pkgs.pkg-config ];
         };
       });
     };

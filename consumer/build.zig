@@ -7,54 +7,48 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // Quoted fields preserve the dependency option names' hyphens.
-    // `b.dependency` uses struct field names as option names (`std/Build.zig`).
-
-    // Null values are not forwarded, leaving each option's default to the library.
-    // Do not override target-dependent `disable-simd` or unsupported linkage here.
+    // Null options preserve the dependency's defaults, including target-dependent SIMD.
     const linkage = b.option(
-        std.builtin.LinkMode,
+        std.lang.LinkMode,
         "linkage",
-        "Forwarded to the box3d dependency: which artifact its build delivers " ++
-            "and installs, the default static archive or a real shared object " ++
-            "with upstream's soname. It selects the delivery and never the " ++
-            "dispatch, so it is independent of `-Druntime`, which decides " ++
-            "whether the module links that artifact at all. Left unset, the " ++
-            "library's own default applies.",
+        "Forward the native library linkage to the box3d dependency",
     );
-
     const dep = b.dependency("box3d", .{
         .target = target,
         .optimize = optimize,
         .linkage = linkage,
         .runtime = b.option(bool, "runtime", "Load the native library at run time instead of linking it"),
-        .@"double-precision" = b.option(bool, "double-precision", "Store world positions in double, as upstream's only PUBLIC definition requires"),
-        .@"disable-simd" = b.option(bool, "disable-simd", "Build without the SIMD kernels upstream's option selects"),
+        .@"double-precision" = b.option(bool, "double-precision", "Store world positions in double"),
+        .@"disable-simd" = b.option(bool, "disable-simd", "Build without the SIMD kernels"),
         .validate = b.option(bool, "validate", "Compile upstream's validation checks in"),
     });
 
-    // The dependency module carries the C-library link requirement.
     const exe_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
-
     exe_mod.addImport("box3d", dep.module("box3d"));
 
-    // Use LLVM: the self-hosted backend's C ABI lowering differs from the core compiler (`build_support/box3d_abi_bridge.h`).
-    // Each consumer root must set its backend because a published module cannot.
-
+    // C ABI lowering requires LLVM; a dependency cannot select its consumer's backend.
     const exe = b.addExecutable(.{
         .use_llvm = true,
         .name = "box3d-consumer",
         .root_module = exe_mod,
     });
-    b.installArtifact(exe);
+    const install_exe = b.addInstallArtifact(exe, .{});
+    b.getInstallStep().dependOn(&install_exe.step);
 
     const run_exe = b.addRunArtifact(exe);
     run_exe.has_side_effects = true;
-    if (b.args) |args| run_exe.addArgs(args);
-    const run_step = b.step("run", "Build and run the consumer program");
-    run_step.dependOn(&run_exe.step);
+    run_exe.addPassthruArgs();
+    b.step("run", "Build and run the consumer program").dependOn(&run_exe.step);
+
+    const try_run_exe = b.addRunArtifact(exe);
+    try_run_exe.has_side_effects = true;
+    try_run_exe.failing_to_execute_foreign_is_an_error = false;
+    try_run_exe.addPassthruArgs();
+    const consumer_step = b.step("consumer", "Run the consumer when possible and install it");
+    consumer_step.dependOn(&try_run_exe.step);
+    consumer_step.dependOn(&install_exe.step);
 }

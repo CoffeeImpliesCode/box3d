@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- The nested `consumer` step forwards the caller's target query, CPU, build options, executor, caches, prefix and arguments; it installs targets the host cannot run.
+- Port to Zig 0.17.0.
 - devenv tasks resolve the SDK root and external caches in shell and single-task runs; task names use underscores where required by the task runner.
 - Runtime precision validation compares the translated type declarations, allowing a runtime provider built with matching double-precision headers.
 - NetBSD translation preprocesses system headers before parsing; `zig/translate.h` declares the compiler `__int128` aliases used by NetBSD headers.
