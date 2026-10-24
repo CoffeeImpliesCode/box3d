@@ -30,13 +30,9 @@ The fork adds `build_support/box3d_abi_bridge.c` and its header. With double pre
 
 Add the package to `build.zig.zon`:
 
-```zig
-.dependencies = .{
-    .box3d = .{ .path = "vendor/box3d" },
-},
+```sh
+zig fetch --save git+https://github.com/CoffeeImpliesCode/box3d#v0.1.0
 ```
-
-Zig 0.17 requires path dependencies to stay inside the consuming package root.
 
 Import the module from `build.zig`:
 
