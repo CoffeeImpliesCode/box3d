@@ -230,8 +230,8 @@ fn checkFloat(
 
 /// How far `at` sits from the anchor, in metres.
 fn reachFromAnchor(at: box3d.Pos) f64 {
-    // Convert to Vec3 before measuring; large-world `Pos` fields are double.
-    return box3d.math.length(box3d.math.toVec3(box3d.math.subPos(at, anchor)));
+    // subPos returns a Vec3 in both position precision modes.
+    return box3d.math.length(box3d.math.subPos(at, anchor));
 }
 
 /// Measures horizontal distance from the anchor in `f64` for both precision modes.

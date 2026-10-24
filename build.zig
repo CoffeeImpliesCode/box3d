@@ -21,16 +21,13 @@ const core_sources = [_][]const u8{
     "aabb.c",
     "arena_allocator.c",
     "bitset.c",
-    "block_allocator.c",
     "body.c",
     "broad_phase.c",
     "capsule.c",
-    "compound.c",
     "constraint_graph.c",
     "contact.c",
     "contact_solver.c",
     "convex_manifold.c",
-    "core.c",
     "distance.c",
     "distance_joint.c",
     "dynamic_tree.c",
@@ -66,7 +63,86 @@ const core_sources = [_][]const u8{
     "types.c",
     "weld_joint.c",
     "wheel_joint.c",
-    "world_snapshot.c",
+};
+
+// Zero-size allocations return NULL; libc still requires a valid memset pointer.
+const core_source = blk: {
+    @setEvalBranchQuota(100_000);
+    const source = @embedFile("src/core.c");
+    const entry = "void* b3AllocZeroed( size_t size )\n{\n";
+    const at = std.mem.indexOf(u8, source, entry) orelse
+        @compileError("box3d: zeroed allocation patch no longer matches upstream");
+    const body_at = at + entry.len;
+    break :blk source[0..body_at] ++ "\tif ( size == 0 )\n\t{\n\t\treturn NULL;\n\t}\n\n" ++ source[body_at..];
+};
+
+// Free-list links require pointer alignment even when the payload size does not.
+const block_allocator_source = blk: {
+    @setEvalBranchQuota(100_000);
+    const source = @embedFile("src/block_allocator.c");
+    const entry = "\tB3_ASSERT( elementSize >= (int)sizeof( void* ) );\n";
+    const at = std.mem.indexOf(u8, source, entry) orelse
+        @compileError("box3d: block allocator stride patch no longer matches upstream");
+    const body_at = at + entry.len;
+    break :blk source[0..body_at] ++
+        "\tconst int alignment = (int)_Alignof( void* );\n" ++
+        "\telementSize = ( elementSize + alignment - 1 ) & ~( alignment - 1 );\n" ++
+        source[body_at..];
+};
+
+// Preserve upstream inputs while fixing packed payload alignment and empty copies.
+const compound_source = blk: {
+    @setEvalBranchQuota(100_000);
+    const source = @embedFile("src/compound.c");
+    const hull_at = std.mem.indexOf(u8, source, "\t\tsharedHulls[i].hullOffset = byteCount;") orelse
+        @compileError("box3d: compound hull layout patch no longer matches upstream");
+    const mesh_at = std.mem.indexOf(u8, source, "\t\tsharedMeshes[i].meshOffset = byteCount;") orelse
+        @compileError("box3d: compound mesh layout patch no longer matches upstream");
+    const align_payload = "\t\tbyteCount = (int)b3AlignUp8( byteCount );\n";
+    const hull_copy = "\tmemcpy( destinationHullInstances, hullInstances, hullCount * sizeof( b3HullInstance ) );";
+    const mesh_copy = "\tmemcpy( destinationMeshInstances, meshInstances, meshCount * sizeof( b3MeshInstance ) );";
+    const hull_copy_at = std.mem.indexOf(u8, source, hull_copy) orelse
+        @compileError("box3d: compound empty hull copy patch no longer matches upstream");
+    const mesh_copy_at = std.mem.indexOf(u8, source, mesh_copy) orelse
+        @compileError("box3d: compound empty mesh copy patch no longer matches upstream");
+    break :blk source[0..hull_at] ++ align_payload ++ source[hull_at..mesh_at] ++
+        align_payload ++ source[mesh_at..hull_copy_at] ++
+        "\tif ( hullCount > 0 )\n\t{\n\t" ++ hull_copy ++ "\n\t}\n" ++
+        source[hull_copy_at + hull_copy.len .. mesh_copy_at] ++
+        "\tif ( meshCount > 0 )\n\t{\n\t" ++ mesh_copy ++ "\n\t}\n" ++
+        source[mesh_copy_at + mesh_copy.len ..];
+};
+
+// Empty snapshot arrays keep NULL storage; libc forbids passing it to memset.
+const world_snapshot_source = blk: {
+    @setEvalBranchQuota(1_000_000);
+    const source = @embedFile("src/world_snapshot.c");
+    const shapes = "\tmemset( world->shapes.data, 0, (size_t)count * sizeof( b3Shape ) );";
+    const contacts = "\tmemset( world->contacts.data, 0, (size_t)count * sizeof( b3Contact ) );";
+    const sets = "\t\tmemset( world->solverSets.data, 0, (size_t)setCount * sizeof( b3SolverSet ) );";
+    const sensors = "\t\t\tmemset( world->sensors.data, 0, (size_t)sensorCount * sizeof( b3Sensor ) );";
+    const islands = "\t\t\tmemset( world->islands.data, 0, (size_t)islandCount * sizeof( b3Island ) );";
+    const shapes_at = std.mem.indexOf(u8, source, shapes) orelse
+        @compileError("box3d: snapshot empty shapes patch no longer matches upstream");
+    const contacts_at = std.mem.indexOf(u8, source, contacts) orelse
+        @compileError("box3d: snapshot empty contacts patch no longer matches upstream");
+    const sets_at = std.mem.indexOf(u8, source, sets) orelse
+        @compileError("box3d: snapshot empty solver sets patch no longer matches upstream");
+    const sensors_at = std.mem.indexOf(u8, source, sensors) orelse
+        @compileError("box3d: snapshot empty sensors patch no longer matches upstream");
+    const islands_at = std.mem.indexOf(u8, source, islands) orelse
+        @compileError("box3d: snapshot empty islands patch no longer matches upstream");
+    break :blk source[0..shapes_at] ++
+        "\tif ( count > 0 )\n\t{\n\t" ++ shapes ++ "\n\t}" ++
+        source[shapes_at + shapes.len .. contacts_at] ++
+        "\tif ( count > 0 )\n\t{\n\t" ++ contacts ++ "\n\t}" ++
+        source[contacts_at + contacts.len .. sets_at] ++
+        "\t\tif ( setCount > 0 )\n\t\t{\n\t" ++ sets ++ "\n\t\t}" ++
+        source[sets_at + sets.len .. sensors_at] ++
+        "\t\t\tif ( sensorCount > 0 )\n\t\t\t{\n\t" ++ sensors ++ "\n\t\t\t}" ++
+        source[sensors_at + sensors.len .. islands_at] ++
+        "\t\t\tif ( islandCount > 0 )\n\t\t\t{\n\t" ++ islands ++ "\n\t\t\t}" ++
+        source[islands_at + islands.len ..];
 };
 
 const shared_sources = [_][]const u8{
@@ -357,6 +433,22 @@ fn addCoreLibrary(
         .files = &core_sources,
         .flags = cFlags(b, target, .core),
     });
+    c_mod.addCSourceFile(.{
+        .file = b.addWriteFiles().add("core.c", core_source),
+        .flags = cFlags(b, target, .core),
+    });
+    c_mod.addCSourceFile(.{
+        .file = b.addWriteFiles().add("compound.c", compound_source),
+        .flags = cFlags(b, target, .core),
+    });
+    c_mod.addCSourceFile(.{
+        .file = b.addWriteFiles().add("block_allocator.c", block_allocator_source),
+        .flags = cFlags(b, target, .core),
+    });
+    c_mod.addCSourceFile(.{
+        .file = b.addWriteFiles().add("world_snapshot.c", world_snapshot_source),
+        .flags = cFlags(b, target, .core),
+    });
 
     // Compile the ABI bridge with the core's flags and macros.
     c_mod.addCSourceFiles(.{
@@ -522,13 +614,7 @@ fn addTargetCheck(
 ) void {
     const cross_target = b.resolveTargetQuery(query);
     const triple = cross_target.result.zigTriple(b.allocator) catch @panic("box3d: unspellable target");
-    if (opts.linkage == .dynamic and !targetHasDynamicLinker(cross_target)) {
-        step.dependOn(&b.addFail(b.fmt(
-            "box3d: shared delivery is unsupported for {s}; no static substitution. Use -Dlinkage=static.",
-            .{triple},
-        )).step);
-        return;
-    }
+    if ((opts.linkage == .dynamic or opts.runtime_loaded) and !targetHasDynamicLinker(cross_target)) return;
 
     const cross = addGraph(b, cross_target, optimize, opts, false);
 
@@ -811,7 +897,7 @@ pub fn build(b: *std.Build) void {
         "check",
         "Compile the C core, the translated interface, the facade, the tests, " ++
             "the smoke program and upstream's own C unit tests for the " ++
-            "six-target matrix without running any of them",
+            "supported matrix targets without running any of them",
     );
     if (targetWasNamed(b)) {
         addTargetCheck(b, check_step, target.query, optimize, opts);
@@ -829,7 +915,7 @@ pub fn build(b: *std.Build) void {
         "box3d: {d} C units from src/, {d} public headers, C17 with extensions, " ++
             "-ffp-contract=off, double-precision={}, disable-simd={}, validate={}\n",
         .{
-            core_sources.len,
+            core_sources.len + 4,
             public_headers.len,
             opts.double_precision,
             disable_simd,

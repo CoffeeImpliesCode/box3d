@@ -5,7 +5,9 @@ This package builds the upstream C17 library and provides a typed Zig facade.
 
 ## Source deviations from upstream
 
-No upstream source file is modified. The fork adds `build_support/box3d_abi_bridge.c` and its header. With double precision on x86-64, Zig 0.16 mis-lowers ten calls that pass `b3Pos` by value before a floating-point argument or return (observed with Zig 0.16; not rechecked on 0.17). The bridge uses pointer arguments and forwards to the unchanged C functions. The typed facade uses the bridge; `README.zig.md` lists the affected calls.
+Vendored source files are unmodified. The build compiles cached copies of `src/core.c`, `src/compound.c`, `src/block_allocator.c`, and `src/world_snapshot.c`. They return NULL for zero-size zeroed allocations, skip empty hull and mesh copies, align packed hull and mesh payloads to eight bytes, round block allocator strides to pointer alignment, and skip zero-count snapshot array clears. `UPSTREAM.sha256` records the unchanged inputs.
+
+The fork adds `build_support/box3d_abi_bridge.c` and its header. With double precision on x86-64, Zig 0.16 mis-lowers ten calls that pass `b3Pos` by value before a floating-point argument or return (observed with Zig 0.16; not rechecked on 0.17). The bridge uses pointer arguments and forwards to the unchanged C functions. The typed facade uses the bridge; `README.zig.md` lists the affected calls.
 
 ## Build deviations from upstream
 
@@ -20,7 +22,7 @@ No upstream source file is modified. The fork adds `build_support/box3d_abi_brid
 | Nix `static` and `shared` outputs | `x86_64-linux`, `aarch64-linux`, `x86_64-darwin`, `aarch64-darwin` |
 | `zig build check` compile targets | `x86_64-linux-gnu`, `aarch64-linux-gnu`, `aarch64-macos-none`, `x86_64-windows-gnu`, `riscv64-linux-gnu`, `wasm32-wasi` |
 
-`zig build check` compiles and links; it does not run target binaries. Static builds are available for all six check targets. Shared builds need a dynamic linker; WASI has none. Windows is in the compile-check list but has no Nix output: upstream's single `BOX3D_EXPORT` macro cannot distinguish the library's exports from a consumer's imports. Upstream's timer uses pthreads and unnamed POSIX semaphores on Linux and Emscripten; other platforms use its single-threaded timer path.
+`zig build check` compiles and links; it does not run target binaries. Static builds are available for all six check targets. Shared builds and runtime loading need a dynamic linker; `check` excludes WASI for these configurations. An explicit shared WASI build is rejected. Windows is in the compile-check list but has no Nix output: upstream's single `BOX3D_EXPORT` macro cannot distinguish the library's exports from a consumer's imports. Upstream's timer uses pthreads and unnamed POSIX semaphores on Linux and Emscripten; other platforms use its single-threaded timer path.
 
 ## Consumption
 

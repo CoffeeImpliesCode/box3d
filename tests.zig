@@ -676,3 +676,77 @@ fn buildFilteredScene(group_index: c_int) !struct { scene: Scene } {
         .cube_shape = cube_shape,
     } };
 }
+
+test "compound hull and mesh payloads stay aligned after odd instance counts" {
+    nativeReady();
+    const c = box3d.c;
+    const material = c.b3DefaultSurfaceMaterial();
+    const boxes = [_]c.b3BoxHull{
+        c.b3MakeBoxHull(0.5, 0.5, 0.5),
+        c.b3MakeBoxHull(1, 1, 1),
+    };
+    const mesh_a = c.b3CreateBoxMesh(box3d.math.zero, box3d.math.one, false);
+    try testing.expect(mesh_a != null);
+    defer c.b3DestroyMesh(mesh_a);
+    const mesh_b = c.b3CreateBoxMesh(box3d.math.zero, .{ .x = 2, .y = 1, .z = 1 }, false);
+    try testing.expect(mesh_b != null);
+    defer c.b3DestroyMesh(mesh_b);
+
+    var capsules = [_]c.b3CompoundCapsuleDef{.{
+        .capsule = .{
+            .center1 = .{ .x = -1, .y = 0, .z = 0 },
+            .center2 = .{ .x = 1, .y = 0, .z = 0 },
+            .radius = 0.25,
+        },
+        .material = material,
+    }};
+    var hulls: [2]c.b3CompoundHullDef = undefined;
+    var meshes: [2]c.b3CompoundMeshDef = undefined;
+    for (&hulls, &boxes) |*hull, *box| hull.* = .{
+        .hull = &box.base,
+        .transform = box3d.math.identity_transform,
+        .material = material,
+    };
+    for (&meshes, [_]@TypeOf(mesh_a){ mesh_a, mesh_b }) |*mesh, data| mesh.* = .{
+        .meshData = data,
+        .transform = box3d.math.identity_transform,
+        .scale = box3d.math.one,
+        .materials = &material,
+        .materialCount = 1,
+    };
+
+    for (0..3) |hull_count| {
+        for (0..3) |mesh_count| {
+            const def: c.b3CompoundDef = .{
+                .capsules = &capsules,
+                .capsuleCount = capsules.len,
+                .hulls = &hulls,
+                .hullCount = @intCast(hull_count),
+                .meshes = &meshes,
+                .meshCount = @intCast(mesh_count),
+                .spheres = null,
+                .sphereCount = 0,
+            };
+            const compound = c.b3CreateCompound(&def);
+            try testing.expect(compound != null);
+            defer c.b3DestroyCompound(compound);
+            const end = @intFromPtr(compound) + @as(usize, @intCast(compound[0].byteCount));
+            for (0..hull_count) |i| {
+                const hull = c.b3GetCompoundHull(compound, @intCast(i)).hull;
+                try testing.expectEqual(@as(usize, 0), @intFromPtr(hull) % 8);
+                try testing.expect(@intFromPtr(hull) > @intFromPtr(compound));
+                try testing.expectEqual(boxes[i].base.version, hull[0].version);
+                try testing.expectEqual(boxes[i].base.byteCount, hull[0].byteCount);
+                try testing.expect(@intFromPtr(hull) + @as(usize, @intCast(hull[0].byteCount)) <= end);
+            }
+            for (0..mesh_count) |i| {
+                const mesh = c.b3GetCompoundMesh(compound, @intCast(i)).meshData;
+                try testing.expectEqual(@as(usize, 0), @intFromPtr(mesh) % 8);
+                try testing.expect(@intFromPtr(mesh) > @intFromPtr(compound));
+                try testing.expectEqual(meshes[i].meshData[0].version, mesh[0].version);
+                try testing.expectEqual(meshes[i].meshData[0].byteCount, mesh[0].byteCount);
+                try testing.expect(@intFromPtr(mesh) + @as(usize, @intCast(mesh[0].byteCount)) <= end);
+            }
+        }
+    }
+}

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Guard zero-count snapshot array clears, fixing replay deserialization in all linkage, runtime, precision, SIMD, and validation configurations without changing vendored files.
+- Align block allocator strides for free-list pointers, fixing manifold recycling in static, shared, and runtime-loaded builds without changing vendored files.
+- Avoid null-pointer zero-length memory operations in compound construction without changing vendored source files.
+- Align packed compound hull and mesh payloads without changing vendored files, fix the double-precision consumer distance calculation, and exclude static-only targets from shared/runtime checks.
 - Port to Zig 0.17.0.
 - devenv tasks resolve the SDK root and external caches in shell and single-task runs; task names use underscores where required by the task runner.
 - Runtime precision validation compares the translated type declarations, allowing a runtime provider built with matching double-precision headers.

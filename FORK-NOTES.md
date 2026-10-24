@@ -1,11 +1,12 @@
 # Fork notes: box3d
 
-Upstream C sources under `src/`, `include/`, `test/` and `shared/` are unmodified.
+Vendored C sources under `src/`, `include/`, `test/` and `shared/` are unmodified. `UPSTREAM.sha256` records these inputs.
 
 ## Source adaptations
 
 | File | Change and reason |
 |---|---|
+| `build.zig` | Generates cached `core.c`, `compound.c`, `block_allocator.c`, and `world_snapshot.c` copies. `b3AllocZeroed(0)` returns NULL before `memset`; empty hull and mesh instance arrays skip `memcpy`. Packed shared hull and mesh payloads use `b3AlignUp8`, with padding included in the allocation size. Block allocator strides round up to `_Alignof(void*)` before initial allocation, growth, indexing, and freeing. Snapshot deserialization guards shape, contact, solver-set, sensor, and island array clears with positive counts because empty arrays can have NULL storage. Every core build uses these copies. |
 | `build_support/box3d_abi_bridge.c` | Adds pointer-argument wrappers for ten `b3Pos`-by-value APIs because Zig's x86-64 double-precision call lowering misplaces later floating-point arguments. |
 | `build_support/box3d_abi_bridge.h` | Declares the bridge exports used by the typed and runtime dispatch. |
 | `zig/query.zig` | Both `*Collect` queries count all hits and return the total, since output capacity does not define query cardinality. |
@@ -31,7 +32,7 @@ Upstream C sources under `src/`, `include/`, `test/` and `shared/` are unmodifie
 
 - 32-bit ARM (`arm`, `armeb`, `thumb`, `thumbeb`) defaults to scalar SIMD because upstream's NEON path uses AArch64-only float divide and square-root intrinsics. Forcing SIMD does not make that path compile.
 - NetBSD translation preprocesses the umbrella header with the target C compiler before parsing to handle libc `_Pragma` declarations. NetBSD AArch64 also needs compiler-provided `__int128` aliases.
-- WASI has no dynamic linker, so shared linkage is refused; static linkage remains available.
+- WASI has no dynamic linker, so shared linkage is refused; static linkage remains available. `check` excludes WASI when shared linkage or runtime loading is selected.
 - The Nix flake does not package Windows. Upstream's `BOX3D_EXPORT` macro cannot express both sides of a Windows DLL import/export boundary with one value.
 - Zig-to-C calls have known argument or world-ID failures on `aarch64_be-linux`, `mips64-linux`, `powerpc64-linux`, `x86-linux`, `powerpc-linux`, `s390x-linux`, `hexagon-linux`, `loongarch64-linux`, `mips64el-linux`, `powerpc64le-linux`, `riscv32-linux`; no common cause is established.
 - `src/timer.c` uses pthreads and unnamed POSIX semaphores on Linux and Emscripten; other platforms use its single-threaded path.
